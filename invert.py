@@ -78,7 +78,19 @@ def save_synth_recons(generator, hourglass, latent_dim, prefix):
         gen_imgs = 0.5 * gen_imgs + 0.5
         recons_imgs = 0.5* recons_imgs + 0.5
         save_grid(gen_imgs,    r, c, prefix+"-gen.png")
-        save_grid(recons_imgs, r, c, prefix+"-recons.png")
+        save_grid(recons_imgs, r, c, prefix+"-gen-recons.png")
+
+
+def save_real_recons(generator, hourglass, inp, prefix):
+        r, c = 5, 5
+        gen_imgs = inp[:r * c]
+        recons_imgs = hourglass.predict(gen_imgs)
+
+        # Rescale images 0 - 1
+        gen_imgs = 0.5 * gen_imgs + 0.5
+        recons_imgs = 0.5* recons_imgs + 0.5
+        save_grid(gen_imgs,    r, c, prefix+"-real.png")
+        save_grid(recons_imgs, r, c, prefix+"-real-recons.png")
 
 
 def build_inverter(img_shape, latent_dim):
@@ -137,18 +149,32 @@ def main():
 
     x_train, x_test = data()
 
-    hourglass.compile(optimizer='adam', loss='mse')
+    epochs = 10
+    which = "hourglass"
+    if which == "barrel":
+        barrel.compile(optimizer='adam', loss='mse')
+        z_train = np.random.normal(size=(500000, latent_dim))
+        z_test  = np.random.normal(size=( 10000, latent_dim))
+        barrel.fit(z_train, z_train,
+                epochs=epochs,
+                batch_size=256,
+                shuffle=True,
+                validation_data=(z_test, z_test))
+    else:
+        assert which == "hourglass"
+        hourglass.compile(optimizer='adam', loss='mse')
 
-    hourglass.fit(x_train, x_train,
-                epochs=10,
+        hourglass.fit(x_train, x_train,
+                epochs=epochs,
                 batch_size=256,
                 shuffle=True,
                 validation_data=(x_test, x_test))
 
-    name = "hourglass-inverter"
-    # saveModel(inverter, name)
+    name = which + "-inverter"
+    saveModel(inverter, name)
 
     save_synth_recons(generator, hourglass, latent_dim, name)
+    save_real_recons(generator, hourglass, x_test, name)
 
     n = 50
     a = np.mgrid[-2:+2:(n*1j), -2:+2:(n*1j)].reshape(2,-1)
