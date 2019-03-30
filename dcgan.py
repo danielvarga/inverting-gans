@@ -6,6 +6,7 @@ from keras.layers import BatchNormalization, Activation, ZeroPadding2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
 from keras.models import Sequential, Model
+from keras.models import model_from_json
 from keras.optimizers import Adam
 
 import matplotlib.pyplot as plt
@@ -14,6 +15,27 @@ import sys
 
 import numpy as np
 
+
+def loadModel(filePrefix):
+    jsonFile = filePrefix + ".json"
+    weightFile = filePrefix + ".h5"
+    jFile = open(jsonFile, 'r')
+    loaded_model_json = jFile.read()
+    jFile.close()
+    mod = model_from_json(loaded_model_json)
+    mod.load_weights(weightFile)
+    print("Loaded model from files {}, {}".format(jsonFile, weightFile))
+    return mod
+
+def saveModel(mod, filePrefix):
+    weightFile = filePrefix + ".h5"
+    mod.save_weights(weightFile)
+    jsonFile = filePrefix + ".json"
+    with open(filePrefix + ".json", "w") as json_file:
+        json_file.write(mod.to_json())
+    print("Saved model to files {}, {}".format(jsonFile, weightFile))
+
+
 class DCGAN():
     def __init__(self):
         # Input shape
@@ -21,7 +43,7 @@ class DCGAN():
         self.img_cols = 28
         self.channels = 1
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
-        self.latent_dim = 100
+        self.latent_dim = 10
 
         optimizer = Adam(0.0002, 0.5)
 
@@ -143,11 +165,13 @@ class DCGAN():
             g_loss = self.combined.train_on_batch(noise, valid)
 
             # Plot the progress
-            print ("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss))
 
             # If at save interval => save generated image samples
             if epoch % save_interval == 0:
                 self.save_imgs(epoch)
+                print ("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss))
+
+        saveModel(self.generator, "model-d%d" % self.latent_dim)
 
     def save_imgs(self, epoch):
         r, c = 5, 5
