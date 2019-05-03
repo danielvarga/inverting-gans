@@ -1,6 +1,7 @@
 import sys
 
 import keras
+import keras.backend as K
 from keras.layers import Dense, Flatten, Activation, Reshape, Input, Lambda
 from keras.models import Sequential, Model
 from keras.optimizers import Adam
@@ -10,6 +11,7 @@ import numpy as np
 
 
 import clocks
+import vis
 
 
 def toroidal_sampler(batch_size, latent_dim):
@@ -24,33 +26,41 @@ def toroidal_sampler(batch_size, latent_dim):
     return z_sample
 
 
+# unlike clocks.clock, this outputs in (0, 1)
 def clocks_latent_to_pixel(latent_batch):
     imgs = []
     for latent_vec in latent_batch:
         params = np.arctan2(latent_vec[::2], latent_vec[1::2])
         imgs.append(clocks.clock(params))
-    imgs = np.array(imgs)
+    imgs = np.array(imgs).astype(np.float32) / 255
     return imgs
 
 
 class ClockDataGenerator(keras.utils.Sequence):
-    def __init__(self, latent_dim, epoch_size, batch_size, latent_input=False):
+    def __init__(self, latent_dim, epoch_size, batch_size, mode=None):
         assert latent_dim % 2 == 0 # direct product of circles
         self.latent_dim = latent_dim
         self.epoch_size = epoch_size
         self.batch_size = batch_size
-        self.latent_input = latent_input
+        assert mode in ("xz", "zx", "xx", "zz")
+        self.mode = mode
 
     def __len__(self):
         return self.epoch_size // self.batch_size
 
     def __getitem__(self, index):
         latent_batch = toroidal_sampler(self.batch_size, self.latent_dim)
+        if self.mode == "zz":
+            return latent_batch, latent_batch
         imgs = clocks_latent_to_pixel(latent_batch)
-        if self.latent_input:
+        if self.mode == "zx":
             return latent_batch, imgs
-        else:
+        elif self.mode == "xz":
             return imgs, latent_batch
+        elif self.mode == "xx":
+            return imgs, imgs
+        else:
+            assert False
 
     def on_epoch_end(self):
         pass
@@ -87,7 +97,59 @@ def clock_test():
     plt.show()
 
 
+def toroid_loss(z):
+    z_odd = z[:, 1::2]
+    z_even = z[:, 0::2]
+    loss = K.mean((z_odd ** 2 + z_even ** 2 - 1) ** 2, axis=1)
+    return loss
+
+
 def main():
+    param_count = 2
+    latent_dim = 2 * param_count
+    epoch_size = 20000
+    batch_size = 32
+    img_size = 28
+
+    x = Input(shape=(img_size, img_size, 3))
+    net = Flatten()(x)
+    net = Dense(100, activation="relu")(net)
+    net = Dense(100, activation="relu")(net)
+    net = Dense(100, activation="relu")(net)
+    z_prime = Dense(latent_dim, activation="linear")(net)
+    encoder = Model(x, z_prime)
+
+    z = Input(shape=(latent_dim, ))
+    net = z
+    net = Dense(100, activation="relu")(net)
+    net = Dense(100, activation="relu")(net)
+    net = Dense(100, activation="relu")(net)
+    net = Dense(100, activation="relu")(net)
+    pixel_dim = img_size * img_size * 3
+    y = Dense(pixel_dim, activation="sigmoid")(net)
+    y = Reshape((img_size, img_size, 3))(y)
+    decoder = Model(z, y)
+
+    tor_loss = toroid_loss(z_prime)
+
+    def custom_loss(x, x_prime):
+        return K.mean(K.square(x - x_prime)) + tor_loss
+
+    autoencoder = Sequential([encoder, decoder])
+
+    autoencoder.compile(optimizer=Adam(lr=0.0001), loss=custom_loss)
+    clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, mode="xx")
+    autoencoder.fit_generator(generator=clock_generator, epochs=10, steps_per_epoch=epoch_size // batch_size)
+    latent_points = toroidal_sampler(100, latent_dim)
+    imgs = decoder.predict(latent_points)
+    print(imgs.shape)
+    # right now this is dumb, no constraint on latent space
+    vis.plot_images(imgs, 10, 10, "generated")
+    imgs, imgs = clock_generator[0]
+    vis.display_reconstructed(autoencoder, imgs, "reconstructed")
+
+
+def main_a_bit_less_old():
     param_count = 2
     latent_dim = 2 * param_count
     epoch_size = 20000
@@ -102,23 +164,22 @@ def main():
     net = Dense(100, activation="relu")(net)
     pixel_dim = img_size * img_size * 3
     y = Dense(pixel_dim, activation="sigmoid")(net)
-    y = Lambda(lambda x: x*255)(y)
     y = Reshape((img_size, img_size, 3))(y)
     model = Model(x, y)
     model.compile(optimizer=Adam(lr=0.0001), loss='mse')
-    clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, latent_input=True)
-    model.fit_generator(generator=clock_generator, epochs=30, steps_per_epoch=epoch_size // batch_size)
+    clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, mode="zx")
+    model.fit_generator(generator=clock_generator, epochs=5, steps_per_epoch=epoch_size // batch_size)
     latent_points = toroidal_sampler(100, latent_dim)
     imgs = model.predict(latent_points)
+    vis.plot_images(imgs, 10, 10, "generated-hinted")
 
     fig=plt.figure(figsize=(8, 8))
     columns = 10
     rows = 10
     for i in range(columns * rows):
         fig.add_subplot(rows, columns, i+1)
-        plt.imshow(imgs[i] / 255)
+        plt.imshow(imgs[i])
     plt.show()
-    return
 
     x = Input(shape=(img_size, img_size, 3))
     net = Flatten()(x)
@@ -128,8 +189,8 @@ def main():
     y = Dense(latent_dim, activation="linear")(net)
     model = Model(x, y)
     model.compile(optimizer=Adam(lr=0.0001), loss='mse')
-    clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, latent_input=False)
-    model.fit_generator(generator=clock_generator, epochs=10, steps_per_epoch=epoch_size // batch_size)
+    clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, mode="xz")
+    model.fit_generator(generator=clock_generator, epochs=5, steps_per_epoch=epoch_size // batch_size)
 
 
 def main_old():
@@ -161,3 +222,4 @@ def main_old():
 
 
 main()
+# main_a_bit_less_old()
