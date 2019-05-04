@@ -126,20 +126,24 @@ def main():
     net = Dense(100, activation="relu")(net)
     net = Dense(100, activation="relu")(net)
     pixel_dim = img_size * img_size * 3
-    y = Dense(pixel_dim, activation="sigmoid")(net)
-    y = Reshape((img_size, img_size, 3))(y)
-    decoder = Model(z, y)
+    net = Dense(pixel_dim, activation="sigmoid")(net)
+    decoder_output = Reshape((img_size, img_size, 3))(net)
+    decoder = Model(z, decoder_output)
+    y = decoder(z_prime)
 
     tor_loss = toroid_loss(z_prime)
 
     def custom_loss(x, x_prime):
         return K.mean(K.square(x - x_prime)) + tor_loss
 
-    autoencoder = Sequential([encoder, decoder])
+    def tor_metric(x, x_prime):
+        return tor_loss
 
-    autoencoder.compile(optimizer=Adam(lr=0.0001), loss=custom_loss)
+    autoencoder = Model(x, y)
+
+    autoencoder.compile(optimizer=Adam(lr=0.0001), loss=custom_loss, metrics=['mse', tor_metric])
     clock_generator = ClockDataGenerator(latent_dim, epoch_size=epoch_size, batch_size=batch_size, mode="xx")
-    autoencoder.fit_generator(generator=clock_generator, epochs=10, steps_per_epoch=epoch_size // batch_size)
+    autoencoder.fit_generator(generator=clock_generator, epochs=100, steps_per_epoch=epoch_size // batch_size)
     latent_points = toroidal_sampler(100, latent_dim)
     imgs = decoder.predict(latent_points)
     print(imgs.shape)
@@ -147,6 +151,7 @@ def main():
     vis.plot_images(imgs, 10, 10, "generated")
     imgs, imgs = clock_generator[0]
     vis.display_reconstructed(autoencoder, imgs, "reconstructed")
+    vis.flattorus_visualization(decoder, "flattorus")
 
 
 def main_a_bit_less_old():
