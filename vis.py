@@ -51,7 +51,8 @@ def display_reconstructed(hourglass, images, name):
 
 
 # todo move to vis.py
-def flattorus_visualization(decoder, name):
+def flattorus_visualization(decoder, param_count, name):
+    assert param_count in (2, 3)
     grid_size = 30
     batch_size = 25
     x = np.linspace(0, 2*np.pi, grid_size, endpoint=False)
@@ -63,8 +64,8 @@ def flattorus_visualization(decoder, name):
     # turning two points on the circle into a point of the torus embedded in 4d:
     embedded = np.vstack([np.cos(cxc[:, 0]), np.sin(cxc[:, 0]), np.cos(cxc[:, 1]), np.sin(cxc[:, 1])]).T
     assert embedded.shape == (grid_size*grid_size, 4)
-    plane = embedded.reshape((grid_size, grid_size, 4))
+    if param_count == 3:
+        embedded = np.concatenate((embedded, np.zeros((embedded.shape[0], 2))), axis=1)
     images = []
-    height, width, l_d = plane.shape
     x_decoded = decoder.predict(embedded, batch_size=batch_size)
     plot_images(x_decoded, grid_size, grid_size, name)
